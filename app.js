@@ -441,21 +441,90 @@ async function lookupName(code) {
 const video = $('#video');
 let stream = null;
 let scanning = false;
-let detector = null;
+let decoderReady = false;
 let lastHit = '';
 let scanErrors = 0;
 let wakeLock = null;
 let audio = null;
 
-function makeDetector() {
-  const api = window.BarcodeDetectionAPI;
+const READ_OPTIONS = { formats: ['EAN13', 'EAN8', 'UPCA'], tryHarder: true, maxNumberOfSymbols: 1 };
+const work = document.createElement('canvas');
+const workCtx = work.getContext('2d', { willReadFrequently: true });
+
+function prepareDecoder() {
+  if (decoderReady) return;
   // Load the decoder from our own folder, so scanning works offline.
-  api.prepareZXingModule({
+  window.ZXingWASM.prepareZXingModule({
     overrides: {
       locateFile: (path, prefix) => (path.endsWith('.wasm') ? 'vendor/zxing_reader.wasm' : prefix + path),
     },
   });
-  return new api.BarcodeDetector({ formats: ['ean_13', 'ean_8', 'upc_a'] });
+  decoderReady = true;
+}
+
+// Reads a barcode from one rectangle of a video frame or image. Looking only at
+// the box (not the whole picture) is what makes small, busy store stickers
+// readable. Each call makes three tries: as is, shrunk (rough thermal print
+// often reads better smaller), and tilted a few degrees (stickers on a bag are
+// rarely straight). The tilt direction alternates from one call to the next.
+let tiltSign = 1;
+async function readRegion(source, sx, sy, sw, sh) {
+  prepareDecoder();
+  const fit = Math.min(1, 1400 / sw);
+  tiltSign = -tiltSign;
+  const tries = [
+    { shrink: 1, tilt: 0 },
+    { shrink: 0.55, tilt: 0 },
+    { shrink: 1, tilt: 2.5 * tiltSign },
+  ];
+  for (const { shrink, tilt } of tries) {
+    const w = Math.max(1, Math.round(sw * fit * shrink));
+    const h = Math.max(1, Math.round(sh * fit * shrink));
+    work.width = w;
+    work.height = h;
+    workCtx.fillStyle = '#fff';
+    workCtx.fillRect(0, 0, w, h);
+    workCtx.translate(w / 2, h / 2);
+    workCtx.rotate((tilt * Math.PI) / 180);
+    workCtx.drawImage(source, sx, sy, sw, sh, -w / 2, -h / 2, w, h);
+    workCtx.setTransform(1, 0, 0, 1, 0, 0);
+    const found = await window.ZXingWASM.readBarcodes(workCtx.getImageData(0, 0, w, h), READ_OPTIONS);
+    const code = found.map((f) => cleanCode(f.text)).find(Boolean);
+    if (code) return code;
+  }
+  return '';
+}
+
+// The part of the camera picture that sits under the on-screen box, plus a margin.
+function boxRegion() {
+  const vw = video.videoWidth;
+  const vh = video.videoHeight;
+  const view = video.getBoundingClientRect();
+  const box = $('.frame').getBoundingClientRect();
+  const scale = Math.max(view.width / vw, view.height / vh); // the video fills the screen (object-fit: cover)
+  const offX = (view.width - vw * scale) / 2;
+  const offY = (view.height - vh * scale) / 2;
+  const padX = box.width * 0.08;
+  const padY = box.height * 0.35;
+  const sx = Math.max(0, (box.left - view.left - padX - offX) / scale);
+  const sy = Math.max(0, (box.top - view.top - padY - offY) / scale);
+  const sw = Math.min(vw - sx, (box.width + 2 * padX) / scale);
+  const sh = Math.min(vh - sy, (box.height + 2 * padY) / scale);
+  return [sx, sy, sw, sh];
+}
+
+// Phone cameras cannot focus very close. Zooming in 2x lets her hold the phone
+// further back, where a small sticker is still sharp.
+async function tuneCamera(track) {
+  try {
+    const caps = track.getCapabilities?.() || {};
+    const want = {};
+    if (caps.focusMode?.includes?.('continuous')) want.focusMode = 'continuous';
+    if (caps.zoom && caps.zoom.max >= 2) want.zoom = Math.max(caps.zoom.min || 1, 2);
+    if (Object.keys(want).length) await track.applyConstraints({ advanced: [want] });
+  } catch (e) {
+    /* optional */
+  }
 }
 
 function beep() {
@@ -493,7 +562,8 @@ async function openScanner() {
     if (!navigator.mediaDevices?.getUserMedia) throw new Error('no camera support');
     const s = await navigator.mediaDevices.getUserMedia({
       audio: false,
-      video: { facingMode: { ideal: 'environment' }, width: { ideal: 1920 }, height: { ideal: 1080 } },
+      // Ask for a sharp picture: small stickers need the detail.
+      video: { facingMode: { ideal: 'environment' }, width: { ideal: 3840 }, height: { ideal: 2160 } },
     });
     if ($('#scanner').hidden) {
       // Closed while the permission question was showing.
@@ -503,9 +573,10 @@ async function openScanner() {
     stream = s;
     video.srcObject = s;
     await video.play();
-    detector ??= makeDetector();
+    await tuneCamera(s.getVideoTracks()[0]);
+    prepareDecoder();
     scanning = true;
-    setScanMsg('Hold the barcode inside the box');
+    setScanMsg('Hold the barcode inside the box. If it will not read, move the phone back a little.');
     try {
       wakeLock = await navigator.wakeLock?.request('screen');
     } catch (e) {
@@ -524,14 +595,13 @@ async function openScanner() {
 
 async function scanLoop() {
   if (!scanning) return;
-  let wait = 140;
+  let wait = 90;
   try {
-    if (video.readyState >= 2) {
-      const found = await detector.detect(video);
+    if (video.readyState >= 2 && video.videoWidth) {
+      const code = await readRegion(video, ...boxRegion());
       if (!scanning) return;
-      const code = found.map((f) => cleanCode(f.rawValue)).find(Boolean);
       if (code) {
-        // Two matching reads in a row, to rule out a misread.
+        // Two matching reads, to rule out a misread.
         if (code === lastHit) {
           beep();
           closeScanner();

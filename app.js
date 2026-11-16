@@ -152,10 +152,18 @@ function cleanCode(raw) {
   return code.length === 12 ? '0' + code : code;
 }
 
-// Store-printed labels for weighed items start with 2. The number changes with
-// the weight, so the price is asked each time and only the name is remembered.
-const isWeighed = (code) => code.length === 13 && code[0] === '2';
+// Store-printed labels for weighed items. The number changes with the weight,
+// so only the name is remembered (under the first 7 digits).
+// - Lulu: starts with 99, then a 5-digit item code, then the price in fils as
+//   5 digits, then the check digit. Worked out from one real sticker
+//   (9908710003308 = Plums, AED 3.30), so the price is shown for her to confirm.
+// Lulu's own fixed-price items (bakery and the like) start with 2 and carry no
+// price: 2200012556016 = Triple Chocolate Doughnuts 4s, AED 11.50. The number is
+// the same every time, so they are handled like any normal product.
+const isLulu = (code) => code.length === 13 && code.startsWith('99');
+const isWeighed = isLulu;
 const weighedKey = (code) => 'w:' + code.slice(0, 7);
+const stickerPrice = (code) => (isLulu(code) ? Number(code.slice(7, 12)) : 0);
 
 // ---------- Rendering ----------
 
@@ -354,10 +362,14 @@ $('#manualBtn').addEventListener('click', () => {
 function handleCode(code) {
   if (isWeighed(code)) {
     const known = state.products[weighedKey(code)];
+    const read = stickerPrice(code);
     openItem({
       title: 'Weighed item',
-      hint: 'Type the price printed on the sticker.',
+      hint: read
+        ? 'Price read from the sticker. Check it matches.'
+        : 'Type the price printed on the sticker.',
       name: known?.name || '',
+      price: read ? fmt(read) : '',
       onOk: ({ name, price }) => {
         rememberProduct(code, name, price, true);
         addLine({ barcode: code, name, price, weighed: true });

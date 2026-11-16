@@ -1,0 +1,149 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cart Tally</title>
+<meta name="theme-color" content="#0b6b3a">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Cart Tally">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" href="icons/icon-192.png">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+
+<header id="summary" class="summary">
+  <button type="button" id="summaryBtn" class="summary-main" aria-label="Change budget">
+    <span id="sumLabel" class="sum-label">Total so far</span>
+    <span class="sum-amount"><small>AED</small> <span id="sumAmount">0.00</span></span>
+    <span class="bar"><span id="bar"></span></span>
+    <span id="sumSub" class="sum-sub"></span>
+  </button>
+  <button type="button" id="menuBtn" class="menu-btn" aria-label="Menu">&#8943;</button>
+</header>
+
+<div id="installTip" class="tip" hidden>
+  <p><strong>Add this app to your Home Screen</strong> so your saved prices are kept. Tap the Share button, then "Add to Home Screen".</p>
+  <button type="button" id="installTipClose" aria-label="Hide this tip">&times;</button>
+</div>
+
+<main>
+  <div id="empty" class="empty" hidden>
+    <p class="empty-title">Your cart is empty</p>
+    <p>Tap <strong>Scan item</strong> as you put each thing in the cart.</p>
+  </div>
+  <ul id="cart" class="cart"></ul>
+</main>
+
+<footer class="actions">
+  <button type="button" id="manualBtn" class="btn ghost">Add by hand</button>
+  <button type="button" id="scanBtn" class="btn primary big">Scan item</button>
+</footer>
+
+<!-- Camera scanner -->
+<div id="scanner" class="scanner" hidden>
+  <video id="video" playsinline muted autoplay></video>
+  <div class="frame" aria-hidden="true"></div>
+  <button type="button" id="scanClose" class="btn scan-close">Close</button>
+  <div class="scan-bottom">
+    <p id="scanMsg" class="scan-msg"></p>
+    <button type="button" id="typeBtn" class="btn ghost-light">Type the number instead</button>
+  </div>
+</div>
+
+<!-- Type a barcode -->
+<dialog id="codeDlg">
+  <form id="codeForm" novalidate>
+    <h2>Type the barcode number</h2>
+    <p class="hint">The digits printed under the barcode.</p>
+    <input id="codeInput" inputmode="numeric" autocomplete="off" enterkeyhint="done" aria-label="Barcode number">
+    <p id="codeErr" class="err" hidden></p>
+    <div class="row">
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="submit" class="btn primary">OK</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Add or edit an item -->
+<dialog id="itemDlg">
+  <form id="itemForm" novalidate>
+    <h2 id="itemTitle"></h2>
+    <p id="itemHint" class="hint"></p>
+    <label for="itemName">Name</label>
+    <input id="itemName" dir="auto" autocomplete="off" enterkeyhint="next">
+    <label for="itemPrice">Price (AED)</label>
+    <input id="itemPrice" inputmode="decimal" autocomplete="off" enterkeyhint="done" placeholder="0.00">
+    <p id="itemErr" class="err" hidden></p>
+    <div class="row">
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="submit" id="itemOk" class="btn primary">Add to cart</button>
+    </div>
+    <button type="button" id="itemDanger" class="btn danger-link" hidden></button>
+  </form>
+</dialog>
+
+<!-- Budget -->
+<dialog id="budgetDlg">
+  <form id="budgetForm" novalidate>
+    <h2>Budget for this trip</h2>
+    <p class="hint">Leave it empty to just keep a running total.</p>
+    <label for="budgetInput">Budget (AED)</label>
+    <input id="budgetInput" inputmode="decimal" autocomplete="off" enterkeyhint="done" placeholder="0.00">
+    <p id="budgetErr" class="err" hidden></p>
+    <div class="row">
+      <button type="button" class="btn ghost" data-close>Cancel</button>
+      <button type="submit" class="btn primary">Save</button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Menu -->
+<dialog id="menuDlg">
+  <h2>Menu</h2>
+  <div class="menu">
+    <button type="button" class="btn menu-item" data-menu="budget">Set budget</button>
+    <button type="button" class="btn menu-item" data-menu="finish">Finish trip and clear cart</button>
+    <button type="button" class="btn menu-item" data-menu="products">My saved items</button>
+    <button type="button" class="btn menu-item" data-menu="trips">Past trips</button>
+    <button type="button" class="btn menu-item" data-menu="backup">Save a backup</button>
+    <button type="button" class="btn menu-item" data-menu="restore">Restore from a backup</button>
+  </div>
+  <div class="row"><button type="button" class="btn ghost" data-close>Close</button></div>
+  <input type="file" id="restoreFile" accept=".json,application/json" hidden>
+</dialog>
+
+<!-- Saved items -->
+<dialog id="productsDlg" class="tall">
+  <h2>My saved items</h2>
+  <input id="productSearch" type="search" placeholder="Search" autocomplete="off" aria-label="Search saved items">
+  <ul id="productList" class="plain-list"></ul>
+  <div class="row"><button type="button" class="btn ghost" data-close>Close</button></div>
+</dialog>
+
+<!-- Past trips -->
+<dialog id="tripsDlg" class="tall">
+  <h2>Past trips</h2>
+  <div id="tripList"></div>
+  <div class="row"><button type="button" class="btn ghost" data-close>Close</button></div>
+</dialog>
+
+<!-- Yes / no question -->
+<dialog id="askDlg">
+  <p id="askMsg" class="ask-msg"></p>
+  <div class="row">
+    <button type="button" id="askNo" class="btn ghost">Cancel</button>
+    <button type="button" id="askYes" class="btn primary">OK</button>
+  </div>
+</dialog>
+
+<div id="toast" class="toast" role="status" hidden></div>
+
+<script src="vendor/barcode-detector.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
